@@ -1,0 +1,7 @@
+default: phase2-firmware
+build_dir: /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build
+domains:
+  - name: phase2-firmware
+    build_dir: /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware
+flash_order:
+  - phase2-firmware
