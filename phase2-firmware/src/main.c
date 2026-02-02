@@ -18,6 +18,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
+#include <zephyr/spinlock.h>
 #include <zephyr/sys/crc.h>
 
 #include "accel_service.h"
@@ -59,10 +60,15 @@ static const struct device *i2c_dev;
  *===========================================================================*/
 
 static accel_sample_t ring_buffer[RING_BUFFER_SAMPLES];
+/* Spinlock to protect ring buffer indices from race conditions */
+static struct k_spinlock buffer_lock;
 static volatile uint16_t write_idx = 0;
 static volatile uint16_t read_idx = 0;
 static volatile uint16_t sample_counter = 0;
 static volatile uint32_t burst_start_ms = 0;
+
+/* Flag to pause sampling during heavy BLE activity (Coin-Cell only) */
+static volatile bool sampling_paused = false;
 
 /*============================================================================
  * Synchronization
@@ -97,6 +103,11 @@ static volatile uint16_t current_mtu = 23; /* Default BLE MTU */
 static void sample_timer_handler(struct k_timer *timer) {
   ARG_UNUSED(timer);
 
+  /* Fix: Pause sampling if requested (prevents overflow during burst) */
+  if (sampling_paused) {
+    return;
+  }
+
   /* Capture timestamp BEFORE any variable latency */
   pending_timestamp_ms = (uint16_t)(k_uptime_get_32() - burst_start_ms);
 
@@ -105,6 +116,17 @@ static void sample_timer_handler(struct k_timer *timer) {
 }
 
 K_TIMER_DEFINE(sample_timer, sample_timer_handler, NULL);
+
+/*============================================================================
+ * Diagnostics Timer
+ *===========================================================================*/
+
+static void diagnostics_timer_handler(struct k_timer *timer) {
+  LOG_INF("STATS: Samples=%u | Dropped=%u | Pkts Sent=%u | Failed=%u",
+          total_samples, samples_overflowed, packets_sent, packets_failed);
+}
+
+K_TIMER_DEFINE(diagnostics_timer, diagnostics_timer_handler, NULL);
 
 /*============================================================================
  * High-Priority Sample Reader Thread
@@ -145,7 +167,9 @@ static void sample_reader_thread_fn(void *p1, void *p2, void *p3) {
       continue;
     }
 
-    /* Pack sample into ring buffer */
+    /* Pack sample into ring buffer - Protected by Spinlock */
+    k_spinlock_key_t key = k_spin_lock(&buffer_lock);
+
     uint16_t idx = write_idx & RING_BUFFER_MASK;
     ring_buffer[idx].sample_counter = sample_counter;
     ring_buffer[idx].rel_timestamp_ms = local_timestamp;
@@ -159,6 +183,8 @@ static void sample_reader_thread_fn(void *p1, void *p2, void *p3) {
 
     /* Check if buffer is full (time for burst) */
     samples_pending = write_idx - read_idx;
+    k_spin_unlock(&buffer_lock, key);
+
     if (samples_pending >= SAMPLES_BEFORE_BURST) {
       k_sem_give(&burst_ready_sem);
     }
@@ -225,6 +251,11 @@ static void burst_controller_thread_fn(void *p1, void *p2, void *p3) {
       continue;
     }
 
+    if (accel_service_get_mode() == MODE_COINCELL_BURST) {
+      /* Pause sampling during burst to prevent overflow & save power */
+      sampling_paused = true;
+    }
+
     for (uint16_t p = 0; p < packets_to_send; p++) {
       /* Re-check connection status before each packet */
       if (!accel_service_data_notify_enabled()) {
@@ -235,11 +266,14 @@ static void burst_controller_thread_fn(void *p1, void *p2, void *p3) {
       /* Build packet */
       tx_packet.burst_id = burst_id;
 
+      /* Read from Ring Buffer - Protected by Spinlock */
+      k_spinlock_key_t key = k_spin_lock(&buffer_lock);
       for (uint16_t s = 0; s < SAMPLES_PER_PACKET; s++) {
         uint16_t src_idx =
             (read_idx + (p * SAMPLES_PER_PACKET) + s) & RING_BUFFER_MASK;
         tx_packet.samples[s] = ring_buffer[src_idx];
       }
+      k_spin_unlock(&buffer_lock, key);
 
       /* Calculate CRC16 over header + samples (all but the last 2 bytes, which
        * are the CRC itself) */
@@ -261,8 +295,13 @@ static void burst_controller_thread_fn(void *p1, void *p2, void *p3) {
       }
     }
 
-    /* Advance read pointer */
+    /* Resume sampling */
+    sampling_paused = false;
+
+    /* Advance read pointer - Protected by Spinlock */
+    k_spinlock_key_t key = k_spin_lock(&buffer_lock);
     read_idx += packets_to_send * SAMPLES_PER_PACKET;
+    k_spin_unlock(&buffer_lock, key);
 
     /* Reset burst start time for next window */
     burst_start_ms = k_uptime_get_32();
@@ -301,9 +340,13 @@ static int mpu6050_init(void) {
 
   k_sleep(K_MSEC(100)); /* Wait for wake */
 
-  /* Set sample rate divider (8kHz / (1 + 7) = 1kHz) */
+  /* Set sample rate divider
+   * DLPF enabled (CFG=3) -> Gyro Rate = 1kHz.
+   * Sample Rate = 1kHz / (1 + SMPLRT_DIV).
+   * We want 1kHz, so SMPLRT_DIV must be 0.
+   */
   buf[0] = MPU6050_SMPLRT_DIV;
-  buf[1] = 7;
+  buf[1] = 0;
   ret = i2c_write(i2c_dev, buf, 2, MPU6050_ADDR);
   if (ret < 0) {
     LOG_ERR("Failed to set sample rate: %d", ret);
@@ -450,7 +493,7 @@ int main(void) {
   BUILD_ASSERT(RING_BUFFER_SAMPLES == 1024, "Buffer must remain 1024 for FFT");
 
   LOG_INF("=========================================");
-  LOG_INF("ISRO Coin-Cell Accelerometer Rev 3");
+  LOG_INF("ISRO Coin-Cell Accelerometer Rev 4");
   LOG_INF("=========================================");
   LOG_INF("Sample format: %u bytes", ACCEL_SAMPLE_SIZE);
   LOG_INF("Packet format: %u bytes (%u samples)", ACCEL_PACKET_SIZE,
@@ -514,6 +557,9 @@ int main(void) {
   k_timer_start(&sample_timer, K_USEC(SAMPLE_PERIOD_US),
                 K_USEC(SAMPLE_PERIOD_US));
   LOG_INF("Sampling started at %u Hz", SAMPLE_FREQ_HZ);
+
+  /* Start diagnostics timer (every 10 seconds) */
+  k_timer_start(&diagnostics_timer, K_SECONDS(10), K_SECONDS(10));
 
   /* Main loop - LED heartbeat only in lab mode */
   while (1) {
