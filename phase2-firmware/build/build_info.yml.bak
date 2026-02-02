@@ -1,22 +1,6 @@
-cmake:
-  board:
-    name: 'nrf5340dk'
-    path:
-     - '/home/smalab/ncs/v3.2.1/zephyr/boards/nordic/nrf5340dk'
-    qualifiers: 'nrf5340/cpuapp'
-    revision: ''
-  images:
-   - name: 'phase2-firmware'
-     source-dir: '/home/smalab/ISRO-Project/New_project-demo/phase2-firmware'
-     type: 'MAIN'
-  kconfig:
-    files:
-     - '/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/_sysbuild/empty.conf'
-     - '/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/_sysbuild/empty.conf'
-    user-files:
-     - '/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/_sysbuild/empty.conf'
-version: '0.1.0'
 west:
-  command: '/home/smalab/ncs/toolchains/43683a87ea/usr/local/bin/west build --build-dir /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build /home/smalab/ISRO-Project/New_project-demo/phase2-firmware --pristine --board nrf5340dk/nrf5340/cpuapp -- -DCONFIG_DEBUG_THREAD_INFO=y -DCONF_FILE=prj.conf'
-  topdir: '/home/smalab/ncs/v3.2.1'
-  version: '1.4.0'
+  command: /home/smalab/ncs/toolchains/43683a87ea/usr/local/bin/west build --build-dir
+    /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build /home/smalab/ISRO-Project/New_project-demo/phase2-firmware
+    --pristine --board nrf5340dk/nrf5340/cpuapp -- -DCONFIG_DEBUG_THREAD_INFO=y -DCONF_FILE=prj.conf
+  topdir: /home/smalab/ncs/v3.2.1
+  version: 1.4.0

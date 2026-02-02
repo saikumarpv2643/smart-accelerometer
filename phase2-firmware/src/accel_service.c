@@ -1,40 +1,58 @@
+/**
+ * @file accel_service.c
+ * @brief Coin-Cell Wireless Accelerometer GATT Service Implementation
+ *
+ * Architecture: Rev 3 - Supports both burst and continuous modes
+ */
+
 #include <string.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/crc.h>
 
 #include "accel_service.h"
 
 LOG_MODULE_REGISTER(accel_svc, LOG_LEVEL_INF);
 
-/* Service configuration */
+/*============================================================================
+ * Configuration
+ *===========================================================================*/
+
 #define SAMPLING_RATE_HZ 1000
 
-/* State variables */
+/*============================================================================
+ * State Variables
+ *===========================================================================*/
+
 static bool data_notify_enabled = false;
 static bool timestamp_notify_enabled = false;
 static struct bt_conn *current_conn = NULL;
+static operating_mode_t current_mode = MODE_COINCELL_BURST;
 
-/* Static data for characteristics */
+/*============================================================================
+ * Static Metadata
+ *===========================================================================*/
+
 static uint16_t sampling_rate = SAMPLING_RATE_HZ;
 static uint32_t current_timestamp = 0;
 
-static struct sensor_metadata sensor_meta = {
-    .sensor_name = "ISRO_Phase2_Accel", .range_g = 16, .unit = "g"};
+static sensor_metadata_t sensor_meta = {
+    .sensor_name = "ISRO_Phase3_Accel", .range_g = 16, .unit = "g"};
 
-/* CCC changed callback for acceleration data */
+/*============================================================================
+ * CCC Callbacks
+ *===========================================================================*/
+
 static void accel_data_ccc_changed(const struct bt_gatt_attr *attr,
                                    uint16_t value) {
-  LOG_INF("CCC write received: value=0x%04x (NOTIFY=0x%04x)", value,
-          BT_GATT_CCC_NOTIFY);
   data_notify_enabled = (value == BT_GATT_CCC_NOTIFY);
   LOG_INF("Acceleration Data notifications %s",
           data_notify_enabled ? "ENABLED" : "DISABLED");
 }
 
-/* CCC changed callback for timestamp */
 static void timestamp_ccc_changed(const struct bt_gatt_attr *attr,
                                   uint16_t value) {
   timestamp_notify_enabled = (value == BT_GATT_CCC_NOTIFY);
@@ -42,7 +60,10 @@ static void timestamp_ccc_changed(const struct bt_gatt_attr *attr,
           timestamp_notify_enabled ? "enabled" : "disabled");
 }
 
-/* Read callback for timestamp characteristic */
+/*============================================================================
+ * Read Callbacks
+ *===========================================================================*/
+
 static ssize_t read_timestamp(struct bt_conn *conn,
                               const struct bt_gatt_attr *attr, void *buf,
                               uint16_t len, uint16_t offset) {
@@ -51,7 +72,6 @@ static ssize_t read_timestamp(struct bt_conn *conn,
                            sizeof(current_timestamp));
 }
 
-/* Read callback for sampling rate characteristic */
 static ssize_t read_sampling_rate(struct bt_conn *conn,
                                   const struct bt_gatt_attr *attr, void *buf,
                                   uint16_t len, uint16_t offset) {
@@ -59,7 +79,6 @@ static ssize_t read_sampling_rate(struct bt_conn *conn,
                            sizeof(sampling_rate));
 }
 
-/* Read callback for sensor metadata characteristic */
 static ssize_t read_sensor_meta(struct bt_conn *conn,
                                 const struct bt_gatt_attr *attr, void *buf,
                                 uint16_t len, uint16_t offset) {
@@ -67,7 +86,41 @@ static ssize_t read_sensor_meta(struct bt_conn *conn,
                            sizeof(sensor_meta));
 }
 
-/* GATT Service Definition */
+static ssize_t read_operating_mode(struct bt_conn *conn,
+                                   const struct bt_gatt_attr *attr, void *buf,
+                                   uint16_t len, uint16_t offset) {
+  uint8_t mode_byte = (uint8_t)current_mode;
+  return bt_gatt_attr_read(conn, attr, buf, len, offset, &mode_byte,
+                           sizeof(mode_byte));
+}
+
+static ssize_t write_operating_mode(struct bt_conn *conn,
+                                    const struct bt_gatt_attr *attr,
+                                    const void *buf, uint16_t len,
+                                    uint16_t offset, uint8_t flags) {
+  if (len != 1) {
+    return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+  }
+
+  uint8_t requested = ((const uint8_t *)buf)[0];
+
+  if (requested == MODE_CONTINUOUS_LAB) {
+    /* TODO: Check external power via ADC before allowing */
+    /* For now, allow mode switch */
+    current_mode = MODE_CONTINUOUS_LAB;
+    LOG_INF("Mode switched to CONTINUOUS (Lab)");
+  } else {
+    current_mode = MODE_COINCELL_BURST;
+    LOG_INF("Mode switched to BURST (Coin-cell)");
+  }
+
+  return len;
+}
+
+/*============================================================================
+ * GATT Service Definition
+ *===========================================================================*/
+
 BT_GATT_SERVICE_DEFINE(
     accel_svc,
     /* Primary Service Declaration */
@@ -90,19 +143,31 @@ BT_GATT_SERVICE_DEFINE(
 
     /* Sensor Metadata Characteristic (READ only) */
     BT_GATT_CHARACTERISTIC(SENSOR_META_CHAR_UUID, BT_GATT_CHRC_READ,
-                           BT_GATT_PERM_READ, read_sensor_meta, NULL, NULL), );
+                           BT_GATT_PERM_READ, read_sensor_meta, NULL, NULL),
+
+    /* Operating Mode Characteristic (READ | WRITE) */
+    BT_GATT_CHARACTERISTIC(OPERATING_MODE_CHAR_UUID,
+                           BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,
+                           BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                           read_operating_mode, write_operating_mode, NULL), );
+
+/*============================================================================
+ * API Implementation
+ *===========================================================================*/
 
 int accel_service_init(void) {
-  LOG_INF("Accelerometer GATT Service initialized");
-  LOG_INF("  Sampling Rate: %u Hz", SAMPLING_RATE_HZ);
-  LOG_INF("  Sensor: %s, Range: +/-%d %s", sensor_meta.sensor_name,
-          sensor_meta.range_g, sensor_meta.unit);
+  LOG_INF("Accelerometer GATT Service initialized (Rev 3)");
+  LOG_INF("  Sample size: %u bytes", ACCEL_SAMPLE_SIZE);
+  LOG_INF("  Packet size: %u bytes (%u samples)", ACCEL_PACKET_SIZE,
+          SAMPLES_PER_PACKET);
+  LOG_INF("  Packets per burst: %u", PACKETS_PER_BURST);
+  LOG_INF("  Initial mode: %s",
+          current_mode == MODE_COINCELL_BURST ? "BURST" : "CONTINUOUS");
   return 0;
 }
 
-int accel_service_notify_batch(struct bt_conn *conn,
-                               const struct accel_sample *samples,
-                               uint8_t count) {
+int accel_service_notify_packet(struct bt_conn *conn,
+                                const accel_packet_t *packet) {
   if (!data_notify_enabled) {
     return -ENOTCONN;
   }
@@ -112,18 +177,8 @@ int accel_service_notify_batch(struct bt_conn *conn,
     return -ENOTCONN;
   }
 
-  if (count == 0 || count > ACCEL_BATCH_SIZE) {
-    return -EINVAL;
-  }
-
-  /* Build batch packet: 1 byte count + samples */
-  static struct accel_batch_packet batch;
-  batch.batch_count = count;
-  memcpy(batch.samples, samples, count * sizeof(struct accel_sample));
-
-  /* Send: 1 + (count * 14) bytes */
-  size_t payload_size = 1 + (count * sizeof(struct accel_sample));
-  return bt_gatt_notify(target, &accel_svc.attrs[1], &batch, payload_size);
+  /* Packet already includes CRC, just send it */
+  return bt_gatt_notify(target, &accel_svc.attrs[1], packet, ACCEL_PACKET_SIZE);
 }
 
 int accel_service_notify_timestamp(struct bt_conn *conn, uint32_t uptime_ms) {
@@ -147,4 +202,19 @@ void accel_service_set_conn(struct bt_conn *conn) {
     bt_conn_unref(current_conn);
   }
   current_conn = conn ? bt_conn_ref(conn) : NULL;
+}
+
+operating_mode_t accel_service_get_mode(void) { return current_mode; }
+
+int accel_service_set_mode(operating_mode_t mode,
+                           bool external_power_detected) {
+  if (mode == MODE_CONTINUOUS_LAB && !external_power_detected) {
+    LOG_WRN("Cannot switch to CONTINUOUS mode without external power");
+    return -EPERM;
+  }
+
+  current_mode = mode;
+  LOG_INF("Operating mode set to %s",
+          mode == MODE_COINCELL_BURST ? "BURST" : "CONTINUOUS");
+  return 0;
 }

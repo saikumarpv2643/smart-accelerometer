@@ -1,0 +1,352 @@
+# Coin-Cell Wireless Accelerometer Architecture (Rev 3)
+
+> **Revision Notes**: Rev 3 adds operating mode definitions and mode selection mechanism.
+
+---
+
+## Operating Modes
+
+### Mode-A: Continuous / Lab Mode
+| Parameter | Value |
+|-----------|-------|
+| Power source | **External supply** (USB/bench) |
+| E2E latency | ≤ 40 ms |
+| BLE behavior | Continuous notifications |
+| Network core | Always ON |
+| Use case | Lab testing, real-time monitoring |
+
+### Mode-B: Coin-Cell / Burst Mode
+| Parameter | Value |
+|-----------|-------|
+| Power source | **CR2032 coin cell** |
+| E2E latency | ~1100 ms (intentional) |
+| BLE behavior | Burst every 1 second |
+| Network core | OFF by default, wakes for burst |
+| Use case | Field deployment, long-duration tests |
+
+### Mode Selection Mechanism
+
+```c
+typedef enum {
+    MODE_COINCELL_BURST,   // Default
+    MODE_CONTINUOUS_LAB
+} operating_mode_t;
+
+static operating_mode_t current_mode = MODE_COINCELL_BURST;
+
+/* Automatic detection on boot */
+void detect_operating_mode(void) {
+    uint16_t vbus_mv = adc_read_vbus();
+    
+    if (vbus_mv > 4000) {
+        /* External power detected (USB VBUS) */
+        current_mode = MODE_CONTINUOUS_LAB;
+        LOG_INF("Mode: CONTINUOUS (external power)");
+    } else {
+        /* Battery only */
+        current_mode = MODE_COINCELL_BURST;
+        LOG_INF("Mode: BURST (coin-cell)");
+    }
+}
+
+/* GATT Command override (optional) */
+static ssize_t write_mode_char(struct bt_conn *conn, ...) {
+    uint8_t requested_mode = buffer[0];
+    if (requested_mode == 0x01 && vbus_detected) {
+        current_mode = MODE_CONTINUOUS_LAB;
+    } else {
+        current_mode = MODE_COINCELL_BURST;
+    }
+    return len;
+}
+```
+
+### Mode Selection Logic
+
+```
+┌──────────────────────────────────────────────────────┐
+│                    BOOT                               │
+└──────────────────────┬───────────────────────────────┘
+                       ▼
+              ┌─────────────────┐
+              │ Read VBUS ADC   │
+              └────────┬────────┘
+                       ▼
+            ┌──────────────────────┐
+            │  VBUS > 4.0V?        │
+            └──────────┬───────────┘
+                       │
+          ┌────────────┴────────────┐
+          │ YES                     │ NO
+          ▼                         ▼
+   ┌──────────────┐         ┌──────────────┐
+   │ MODE-A: LAB  │         │ MODE-B: BURST│
+   │ Continuous   │         │ Coin-cell    │
+   │ ≤40ms latency│         │ ~1s latency  │
+   └──────────────┘         └──────────────┘
+          │                         │
+          ▼                         ▼
+   ┌──────────────┐         ┌──────────────┐
+   │ Network core │         │ Network core │
+   │ always ON    │         │ power-gated  │
+   └──────────────┘         └──────────────┘
+```
+
+### GATT Mode Override Characteristic
+
+| UUID | Access | Description |
+|------|--------|-------------|
+| `12340005-...` | READ/WRITE | Current mode (0x00=Burst, 0x01=Continuous) |
+
+> [!NOTE]
+> Mode switch to CONTINUOUS is only allowed when external power is detected. Writing 0x01 on battery power is ignored.
+
+---
+
+## System Parameters
+
+| Parameter | Value |
+|-----------|-------|
+| Sample rate | 1000 Hz (hardware timer) |
+| Sampling latency | < 20 µs |
+| Buffer depth | 1024 samples |
+| Sample size | **10 bytes** |
+| Buffer memory | 10,240 bytes |
+| Packet payload | 24 samples × 10 = 240 bytes |
+| Packet total | 243 bytes (1 header + 240 + 2 CRC) |
+| Packets per burst | 43 |
+| E2E latency | ~1100 ms (intentional) |
+| Burst TX duration | 40–80 ms (connection interval dependent) |
+
+---
+
+## Sample Format (10 Bytes, Corrected)
+
+```c
+typedef struct __attribute__((packed)) {
+    uint16_t sample_counter;     // 2 bytes - monotonic, loss detection
+    uint16_t rel_timestamp_ms;   // 2 bytes - ms from burst start, no wrap in 1s
+    int16_t  accel_x;            // 2 bytes
+    int16_t  accel_y;            // 2 bytes
+    int16_t  accel_z;            // 2 bytes
+} accel_sample_t;                // TOTAL = 10 bytes ✓
+```
+
+### Design Rationale
+
+| Field | Size | Why |
+|-------|------|-----|
+| `sample_counter` | **16-bit** | Wraps at 65535 (~65s @ 1kHz). Sufficient for single test session. Reset per burst or per connection. |
+| `rel_timestamp_ms` | **16-bit ms** | Wraps at 65.5s. At 1kHz, 1ms resolution is sufficient. **No wrap within 1s burst.** |
+| `accel_xyz` | 6 bytes | Raw signed counts, ±16g range standard |
+
+### Packet Format (243 Bytes)
+
+```c
+typedef struct __attribute__((packed)) {
+    uint8_t  burst_id;           // 1 byte - burst sequence
+    accel_sample_t samples[24];  // 240 bytes
+    uint16_t crc16;              // 2 bytes
+} accel_packet_t;                // TOTAL = 243 bytes ✓
+```
+
+**MTU Check**: BLE ATT MTU 244 bytes → 243 byte payload fits ✓
+
+---
+
+## Timestamp Design (No Wrap Issue)
+
+| Approach | Resolution | Wrap Point | Within 1s Burst |
+|----------|------------|------------|-----------------|
+| ~~uint16_t µs~~ | 1 µs | 65 ms | ❌ Wraps 15× |
+| **uint16_t ms** | 1 ms | 65.5 s | ✅ No wrap |
+
+**At 1 kHz sampling**:
+- Theoretical sample spacing = 1.000 ms
+- Jitter measurement resolution = 1 ms (sufficient for vibration analysis)
+- No ambiguity, no wrap counter needed
+
+---
+
+## ISR Architecture (Minimal Work)
+
+### Problem with Original Design
+Doing I2C read inside ISR:
+- I2C latency: 200–400 µs (variable)
+- Blocks other interrupts
+- Jitter source
+
+### Corrected Design: ISR + High-Priority Thread
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  TIMER2 ISR (< 5 µs)                                    │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │ 1. Clear interrupt flag                          │    │
+│  │ 2. Capture timestamp: rel_ms = k_uptime_get()    │    │
+│  │ 3. Increment sample_counter                      │    │
+│  │ 4. k_sem_give(&sample_sem)  ← wake reader thread │    │
+│  └─────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────────────────┐
+│  SAMPLE READER THREAD (Priority 0, highest)             │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │ while (1) {                                      │    │
+│  │   k_sem_take(&sample_sem, K_FOREVER);            │    │
+│  │   i2c_burst_read(mpu, raw, 6);  // ~300µs       │    │
+│  │   pack_sample(&ring[wr_idx++], ts, raw);         │    │
+│  │ }                                                │    │
+│  └─────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Benefits
+| Aspect | ISR-Only | ISR + Thread |
+|--------|----------|--------------|
+| ISR duration | 300+ µs | < 5 µs |
+| Jitter source | I2C timing | Timer only |
+| Nested interrupt risk | High | Low |
+| Timestamp accuracy | After I2C | Before I2C |
+
+---
+
+## Power Model (Corrected)
+
+### Previous Error
+Summing ISR current separately → double-counting CPU active current.
+
+### Corrected Model
+
+| Phase | Duration | Current | Energy |
+|-------|----------|---------|--------|
+| **Sampling phase** (1s) | 1000 ms | ~1.5 mA avg | 0.42 µAh |
+| — CPU active (reader thread) | — | — | — |
+| — I2C + sensor | — | — | — |
+| **Sleep between phases** | N/A | 3 µA | — |
+| **BLE burst TX** | 40–80 ms | 5–8 mA | 0.08–0.18 µAh |
+| **Total per 1s cycle** | — | — | **~0.5–0.6 µAh** |
+
+### Battery Life Estimate
+
+| Scenario | Calculation | Result |
+|----------|-------------|--------|
+| CR2032 capacity | 220 mAh | — |
+| Cycles available | 220,000 / 0.55 | ~400,000 |
+| Continuous operation | 400,000 s | **~110 hours** |
+| 10% duty cycle | — | **46 days** |
+
+> **Note**: These are estimates. Actual measurement required for final specification.
+
+---
+
+## BLE Burst Timing (Review-Safe Statement)
+
+> "43 packets are transmitted over multiple connection events, resulting in **40–80 ms** burst duration depending on connection interval (7.5–30 ms) and packets-per-event capability."
+
+### Factors Affecting Burst Duration
+| Factor | Impact |
+|--------|--------|
+| Connection interval | 7.5–30 ms typical |
+| TX buffer depth | 6–10 packets queued |
+| Controller scheduling | Vendor-specific |
+| Channel conditions | Retransmits add delay |
+
+---
+
+## Hardware Considerations
+
+### Bulk Capacitor (Mandatory)
+
+> [!CAUTION]
+> CR2032 has ~30 mΩ internal resistance. 43 back-to-back packets at 8 mA can cause voltage droop and brownout.
+
+**Solution**:
+- Add **47–100 µF bulk capacitor** near VCC
+- Or: Insert 2–5 ms delay between packets (trades burst duration for safety)
+
+### Inter-Packet Delay Option
+
+```c
+for (int i = 0; i < 43; i++) {
+    ble_notify(packet[i], 243);
+    k_sleep(K_MSEC(2));  // Allow cap recharge
+}
+// Burst duration: 43 × (1 + 2) = ~130 ms
+```
+
+---
+
+## Ring Buffer Design (Zero-Copy IPC)
+
+### Previous Issue
+```c
+memcpy(shared_ram, ring_buffer, 10240);  // Wastes time + power
+```
+
+### Corrected Design
+```c
+/* Shared memory region (linker-placed) */
+__attribute__((section(".shared_ram")))
+accel_sample_t ring_buffer[1024];
+
+__attribute__((section(".shared_ram")))
+volatile uint16_t write_idx, read_idx;
+
+/* Network core reads directly from shared ring buffer */
+void network_core_burst(void) {
+    uint16_t rd = read_idx;
+    for (int p = 0; p < 43; p++) {
+        for (int s = 0; s < 24; s++) {
+            packet.samples[s] = ring_buffer[(rd + s) & 1023];
+        }
+        rd += 24;
+        ble_notify(&packet, 243);
+    }
+    read_idx = rd;  // Atomic update
+}
+```
+
+**Benefits**:
+- No memcpy overhead
+- Network core reads at own pace
+- Cache-coherent on Cortex-M33
+
+---
+
+## Correctness Guarantees
+
+| Concern | Mechanism |
+|---------|-----------|
+| Sample loss | `sample_counter` gaps detected by receiver |
+| Timestamp accuracy | Captured in ISR, before I2C variability |
+| Jitter analysis | `rel_timestamp_ms` shows actual vs expected timing |
+| Packet integrity | CRC16 per packet |
+| Burst ordering | `burst_id` + packet sequence |
+| Power glitch | Bulk capacitor + inter-packet delay |
+
+---
+
+## Why 1 Second Latency is Acceptable
+
+| Reason | Explanation |
+|--------|-------------|
+| **Post-processing workflow** | Vibration data analyzed offline with MATLAB/Python |
+| **FFT equivalence** | Same frequency spectrum whether delivered in 50ms or 1100ms |
+| **Timestamp integrity** | Receiver reconstructs exact timing from `rel_timestamp_ms` |
+| **Power budget** | Continuous streaming → 2h battery; Burst mode → 4+ days |
+| **ISRO test profile** | Tests run minutes; 1s latency imperceptible |
+
+---
+
+## Summary of Fixes
+
+| Issue | Original | Fixed |
+|-------|----------|-------|
+| Sample size | 12 bytes (math error) | **10 bytes** (16-bit counter) |
+| Timestamp wrap | µs wraps 15× in 1s | **ms, no wrap** |
+| Power model | ISR current summed | **Phase-based average** |
+| ISR work | I2C inside ISR | **ISR + thread split** |
+| memcpy overhead | 10KB copy | **Zero-copy shared RAM** |
+| Burst brownout | Not addressed | **Bulk cap + delay option** |

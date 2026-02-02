@@ -150,34 +150,71 @@ async function sendStop() {
     console.log("Stopped. Samples:", receivedData.length);
 }
 
-// ================= DATA PROCESSING =================
+// ================= DATA PROCESSING (Rev 3 Format) =================
+// Packet: burst_id(1) + samples[24×10] + crc16(2) = 243 bytes
+// Sample: sample_counter(2) + rel_timestamp_ms(2) + x(2) + y(2) + z(2) = 10 bytes
+
+const SAMPLE_SIZE = 10;
+const SAMPLES_PER_PACKET = 24;
+const PACKET_SIZE = 243;  // 1 + 240 + 2
+
 function onData(event) {
     const view = event.target.value;
     const receiveTime = Date.now();
 
-    // Parse batched packet: batch_count(1) + samples[batch_count * 14]
-    const batchCount = view.getUint8(0);
+    const packetLen = view.byteLength;
 
-    if (batchCount === 0 || batchCount > 10) {
-        console.warn("Invalid batch count:", batchCount);
+    // Determine packet format: Rev 3 (243 bytes) or legacy (141 bytes)
+    let samplesInPacket, sampleSize, hasNewFormat;
+
+    if (packetLen >= 243) {
+        // Rev 3: 243-byte packet (24 samples × 10 bytes)
+        hasNewFormat = true;
+        samplesInPacket = SAMPLES_PER_PACKET;
+        sampleSize = SAMPLE_SIZE;
+    } else if (packetLen >= 15) {
+        // Legacy: batch_count(1) + samples[n × 14]
+        hasNewFormat = false;
+        samplesInPacket = view.getUint8(0);
+        sampleSize = 14;
+        if (samplesInPacket === 0 || samplesInPacket > 10) {
+            console.warn("Invalid legacy batch count:", samplesInPacket);
+            return;
+        }
+    } else {
+        console.warn("Unknown packet format, length:", packetLen);
         return;
     }
 
-    // Process each sample in the batch
-    for (let i = 0; i < batchCount; i++) {
-        const offset = 1 + (i * 14);
+    // Parse each sample
+    for (let i = 0; i < samplesInPacket; i++) {
+        let offset, sampleCounter, timestampMs, rawX, rawY, rawZ;
 
-        // Parse sample: sample_counter(4) + timestamp_ms(4) + x(2) + y(2) + z(2)
-        const sampleCounter = view.getUint32(offset, true);
-        const timestampMs = view.getUint32(offset + 4, true);
-        const rawX = view.getInt16(offset + 8, true);
-        const rawY = view.getInt16(offset + 10, true);
-        const rawZ = view.getInt16(offset + 12, true);
+        if (hasNewFormat) {
+            // Rev 3 format: burst_id(1) + samples[24 × 10]
+            offset = 1 + (i * SAMPLE_SIZE);
+            sampleCounter = view.getUint16(offset, true);      // 2 bytes
+            timestampMs = view.getUint16(offset + 2, true);    // 2 bytes (relative)
+            rawX = view.getInt16(offset + 4, true);
+            rawY = view.getInt16(offset + 6, true);
+            rawZ = view.getInt16(offset + 8, true);
+        } else {
+            // Legacy format: batch_count(1) + samples[n × 14]
+            offset = 1 + (i * sampleSize);
+            sampleCounter = view.getUint32(offset, true);      // 4 bytes
+            timestampMs = view.getUint32(offset + 4, true);    // 4 bytes (absolute)
+            rawX = view.getInt16(offset + 8, true);
+            rawY = view.getInt16(offset + 10, true);
+            rawZ = view.getInt16(offset + 12, true);
+        }
 
-        // Check for dropped samples
-        if (lastSampleCounter > 0 && sampleCounter > lastSampleCounter + 1) {
-            const dropped = sampleCounter - lastSampleCounter - 1;
-            droppedSamples += dropped;
+        // Check for dropped samples (handle 16-bit wrap for Rev 3)
+        if (lastSampleCounter > 0) {
+            let expected = (lastSampleCounter + 1) & (hasNewFormat ? 0xFFFF : 0xFFFFFFFF);
+            if (sampleCounter !== expected && sampleCounter > lastSampleCounter) {
+                const dropped = sampleCounter - lastSampleCounter - 1;
+                droppedSamples += dropped;
+            }
         }
         lastSampleCounter = sampleCounter;
 
@@ -186,8 +223,8 @@ function onData(event) {
         const ay_g = rawY / LSB_PER_G;
         const az_g = rawZ / LSB_PER_G;
 
-        // Calculate time
-        const t = sampleCounter / SAMPLE_RATE;
+        // Calculate time from sample counter
+        const t = (sampleCount) / SAMPLE_RATE;
         sampleCount++;
 
         // Store for CSV
@@ -198,22 +235,19 @@ function onData(event) {
         timeChart.data.datasets[1].data.push({ x: t, y: ay_g });
         timeChart.data.datasets[2].data.push({ x: t, y: az_g });
 
-        // Calculate E2E latency using relative device timestamps
-        // Store first device timestamp and browser time for sync
+        // Calculate E2E latency (for burst mode, this includes buffering time)
         if (sampleCount === 1) {
             window.firstDeviceTs = timestampMs;
             window.firstBrowserTs = receiveTime;
         }
 
-        if (i === batchCount - 1 && window.firstDeviceTs !== undefined) {
-            // Calculate relative times from session start
-            const deviceElapsed = timestampMs - window.firstDeviceTs;   // ms since first sample (device)
-            const browserElapsed = receiveTime - window.firstBrowserTs; // ms since first sample (browser)
-
-            // Latency = how much later browser received than device produced
+        // Calculate latency on last sample of packet
+        if (i === samplesInPacket - 1 && window.firstDeviceTs !== undefined) {
+            const deviceElapsed = timestampMs - window.firstDeviceTs;
+            const browserElapsed = receiveTime - window.firstBrowserTs;
             const latency = browserElapsed - deviceElapsed;
 
-            if (latency >= 0) {  // Ignore negative (clock drift)
+            if (latency >= 0) {
                 latencyHistory.push(latency);
                 if (latencyHistory.length > LATENCY_WINDOW) latencyHistory.shift();
                 if (latency > latencyMax) latencyMax = latency;
