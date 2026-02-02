@@ -22,7 +22,12 @@
 
 #include "accel_service.h"
 
+/* Coin-cell mode: reduce logging to save power */
+#ifdef CONFIG_COINCELL_MODE
+LOG_MODULE_REGISTER(main, LOG_LEVEL_WRN);
+#else
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
+#endif
 
 /*============================================================================
  * Configuration
@@ -63,8 +68,9 @@ static volatile uint32_t burst_start_ms = 0;
  * Synchronization
  *===========================================================================*/
 
-K_SEM_DEFINE(sample_ready_sem, 0, 1); /* ISR signals reader thread */
-K_SEM_DEFINE(burst_ready_sem, 0, 1);  /* Reader signals burst controller */
+/* Semaphore depth must be unbounded to prevent losing ISR signals */
+K_SEM_DEFINE(sample_ready_sem, 0, K_SEM_MAX_LIMIT);
+K_SEM_DEFINE(burst_ready_sem, 0, K_SEM_MAX_LIMIT);
 
 static volatile uint16_t pending_timestamp_ms = 0;
 
@@ -73,9 +79,16 @@ static volatile uint16_t pending_timestamp_ms = 0;
  *===========================================================================*/
 
 static uint32_t total_samples = 0;
+static volatile uint32_t samples_overflowed =
+    0; /* Ring buffer overflow count */
 static uint32_t total_bursts = 0;
 static uint32_t packets_sent = 0;
 static uint32_t packets_failed = 0;
+
+/* MTU tracking - need >= 246 for 243-byte packets */
+static volatile bool mtu_ready = false;
+static volatile uint16_t current_mtu = 23; /* Default BLE MTU */
+#define REQUIRED_MTU 246 /* 243 payload + 3 ATT header (opcode + handle) */
 
 /*============================================================================
  * Timer ISR - Minimal work, deterministic timing
@@ -114,6 +127,16 @@ static void sample_reader_thread_fn(void *p1, void *p2, void *p3) {
     /* Wait for ISR signal */
     k_sem_take(&sample_ready_sem, K_FOREVER);
 
+    /* Capture timestamp locally to avoid race with ISR */
+    uint16_t local_timestamp = pending_timestamp_ms;
+
+    /* Ring buffer overflow protection: drop sample if full */
+    uint16_t samples_pending = write_idx - read_idx;
+    if (samples_pending >= RING_BUFFER_SAMPLES) {
+      samples_overflowed++;
+      continue; /* Drop THIS sample - never block ISR/sampling */
+    }
+
     /* Read accelerometer data via I2C - this takes ~300µs */
     ret = i2c_burst_read(i2c_dev, MPU6050_ADDR, MPU6050_ACCEL_XOUT_H, raw_data,
                          6);
@@ -125,7 +148,7 @@ static void sample_reader_thread_fn(void *p1, void *p2, void *p3) {
     /* Pack sample into ring buffer */
     uint16_t idx = write_idx & RING_BUFFER_MASK;
     ring_buffer[idx].sample_counter = sample_counter;
-    ring_buffer[idx].rel_timestamp_ms = pending_timestamp_ms;
+    ring_buffer[idx].rel_timestamp_ms = local_timestamp;
     ring_buffer[idx].accel_x = (int16_t)((raw_data[0] << 8) | raw_data[1]);
     ring_buffer[idx].accel_y = (int16_t)((raw_data[2] << 8) | raw_data[3]);
     ring_buffer[idx].accel_z = (int16_t)((raw_data[4] << 8) | raw_data[5]);
@@ -135,8 +158,8 @@ static void sample_reader_thread_fn(void *p1, void *p2, void *p3) {
     total_samples++;
 
     /* Check if buffer is full (time for burst) */
-    uint16_t samples_buffered = write_idx - read_idx;
-    if (samples_buffered >= SAMPLES_BEFORE_BURST) {
+    samples_pending = write_idx - read_idx;
+    if (samples_pending >= SAMPLES_BEFORE_BURST) {
       k_sem_give(&burst_ready_sem);
     }
   }
@@ -170,24 +193,45 @@ static void burst_controller_thread_fn(void *p1, void *p2, void *p3) {
     k_sem_take(&burst_ready_sem, K_FOREVER);
 
     if (!accel_service_data_notify_enabled()) {
-      /* Not connected or notifications not enabled - drain buffer */
+      /* Not connected or notifications not enabled - silently drain buffer */
+      read_idx = write_idx;
+      continue;
+    }
+
+    if (!mtu_ready) {
+      /* MTU exchange not complete yet - drain buffer and wait */
+      LOG_WRN("MTU not ready (current: %u, need: %u), draining %u samples",
+              current_mtu, REQUIRED_MTU, write_idx - read_idx);
       read_idx = write_idx;
       continue;
     }
 
     LOG_INF("Starting burst %u: %u samples buffered", burst_id,
-            write_idx - read_idx);
+            (uint16_t)(write_idx - read_idx));
 
-    /* Send all packets (43 packets × 24 samples = 1032 samples) */
-    uint16_t samples_to_send = write_idx - read_idx;
-    uint16_t packets_needed =
-        (samples_to_send + SAMPLES_PER_PACKET - 1) / SAMPLES_PER_PACKET;
+    /*
+     * Robustness fix: Only send full packets available in buffer.
+     * Prevents read_idx from overshooting write_idx (1024 is not divisible by
+     * 24).
+     */
+    uint16_t samples_available = write_idx - read_idx;
+    uint16_t packets_to_send = samples_available / SAMPLES_PER_PACKET;
 
-    if (packets_needed > PACKETS_PER_BURST) {
-      packets_needed = PACKETS_PER_BURST;
+    if (packets_to_send > PACKETS_PER_BURST) {
+      packets_to_send = PACKETS_PER_BURST;
     }
 
-    for (uint16_t p = 0; p < packets_needed; p++) {
+    if (packets_to_send == 0) {
+      continue;
+    }
+
+    for (uint16_t p = 0; p < packets_to_send; p++) {
+      /* Re-check connection status before each packet */
+      if (!accel_service_data_notify_enabled()) {
+        LOG_WRN("Connection lost mid-burst, aborting");
+        break;
+      }
+
       /* Build packet */
       tx_packet.burst_id = burst_id;
 
@@ -197,7 +241,8 @@ static void burst_controller_thread_fn(void *p1, void *p2, void *p3) {
         tx_packet.samples[s] = ring_buffer[src_idx];
       }
 
-      /* Calculate CRC16 over header + samples */
+      /* Calculate CRC16 over header + samples (all but the last 2 bytes, which
+       * are the CRC itself) */
       tx_packet.crc16 = crc16_ccitt(0xFFFF, (const uint8_t *)&tx_packet,
                                     ACCEL_PACKET_SIZE - 2);
 
@@ -217,7 +262,7 @@ static void burst_controller_thread_fn(void *p1, void *p2, void *p3) {
     }
 
     /* Advance read pointer */
-    read_idx += packets_needed * SAMPLES_PER_PACKET;
+    read_idx += packets_to_send * SAMPLES_PER_PACKET;
 
     /* Reset burst start time for next window */
     burst_start_ms = k_uptime_get_32();
@@ -225,8 +270,12 @@ static void burst_controller_thread_fn(void *p1, void *p2, void *p3) {
     burst_id++;
     total_bursts++;
 
-    LOG_INF("Burst complete: %u packets sent, %u failed", packets_sent,
-            packets_failed);
+    LOG_INF("Burst complete: %u packets sent, %u failed%s", packets_sent,
+            packets_failed,
+            samples_overflowed > 0 ? " (OVERFLOW detected)" : "");
+    if (samples_overflowed > 0) {
+      LOG_WRN("Total dropped samples due to overflow: %u", samples_overflowed);
+    }
   }
 }
 
@@ -287,6 +336,14 @@ static int mpu6050_init(void) {
  * BLE Connection Callbacks
  *===========================================================================*/
 
+/* Forward declare MTU exchange callback and params */
+static void mtu_exchange_cb(struct bt_conn *conn, uint8_t err,
+                            struct bt_gatt_exchange_params *params);
+
+static struct bt_gatt_exchange_params mtu_exchange_params = {
+    .func = mtu_exchange_cb,
+};
+
 static void connected(struct bt_conn *conn, uint8_t err) {
   if (err) {
     LOG_ERR("Connection failed (err %u)", err);
@@ -294,9 +351,25 @@ static void connected(struct bt_conn *conn, uint8_t err) {
   }
 
   LOG_INF("Connected");
-  dk_set_led_on(DK_LED1);
+
+  /* LED only in lab mode to save coin-cell power */
+  if (accel_service_get_mode() == MODE_CONTINUOUS_LAB) {
+    dk_set_led_on(DK_LED1);
+  }
 
   accel_service_set_conn(conn);
+
+  /* Reset MTU state */
+  mtu_ready = false;
+  current_mtu = 23;
+
+  /* Request MTU exchange for large packets */
+  int ret = bt_gatt_exchange_mtu(conn, &mtu_exchange_params);
+  if (ret) {
+    LOG_ERR("MTU exchange request failed (err %d)", ret);
+  } else {
+    LOG_INF("MTU exchange requested");
+  }
 
   /* Reset burst timing on new connection */
   burst_start_ms = k_uptime_get_32();
@@ -305,15 +378,37 @@ static void connected(struct bt_conn *conn, uint8_t err) {
 
 static void disconnected(struct bt_conn *conn, uint8_t reason) {
   LOG_INF("Disconnected (reason %u)", reason);
-  dk_set_led_off(DK_LED1);
+  dk_set_led_off(DK_LED1); /* Always safe to turn off */
 
-  accel_service_set_conn(NULL);
+  accel_service_set_conn(NULL); /* Resets CCC state */
+  mtu_ready = false;
+  current_mtu = 23;
 }
 
 static void le_param_updated(struct bt_conn *conn, uint16_t interval,
                              uint16_t latency, uint16_t timeout) {
   LOG_INF("Connection params: interval=%u (%.2f ms), latency=%u, timeout=%u",
           interval, interval * 1.25, latency, timeout);
+}
+
+/* GATT MTU exchange callback implementation */
+static void mtu_exchange_cb(struct bt_conn *conn, uint8_t err,
+                            struct bt_gatt_exchange_params *params) {
+  if (err) {
+    LOG_ERR("MTU exchange failed (err %u)", err);
+    return;
+  }
+
+  current_mtu = bt_gatt_get_mtu(conn);
+  LOG_INF("MTU exchanged: %u bytes", current_mtu);
+
+  if (current_mtu >= REQUIRED_MTU) {
+    mtu_ready = true;
+    LOG_INF("MTU ready for 243-byte packets");
+  } else {
+    LOG_WRN("MTU %u too small for 243-byte packets (need %u)", current_mtu,
+            REQUIRED_MTU);
+  }
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -336,12 +431,23 @@ static const struct bt_data sd[] = {
     BT_DATA_BYTES(BT_DATA_UUID128_ALL, ACCEL_SERVICE_UUID_VAL),
 };
 
+/* Connectable advertising parameters */
+static struct bt_le_adv_param adv_param = BT_LE_ADV_PARAM_INIT(
+    BT_LE_ADV_OPT_CONN, BT_GAP_ADV_FAST_INT_MIN_2, /* 100 ms */
+    BT_GAP_ADV_FAST_INT_MAX_2,                     /* 150 ms */
+    NULL);
+
 /*============================================================================
  * Main Entry Point
  *===========================================================================*/
 
 int main(void) {
   int err;
+
+  /* Power-safe enforcement: Ensure structures match BLE packet requirements */
+  BUILD_ASSERT(sizeof(accel_sample_t) == 10, "Sample must be 10 bytes");
+  BUILD_ASSERT(sizeof(accel_packet_t) == 243, "Packet must be 243 bytes");
+  BUILD_ASSERT(RING_BUFFER_SAMPLES == 1024, "Buffer must remain 1024 for FFT");
 
   LOG_INF("=========================================");
   LOG_INF("ISRO Coin-Cell Accelerometer Rev 3");
@@ -394,7 +500,7 @@ int main(void) {
   }
 
   /* Start advertising */
-  err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+  err = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
   if (err) {
     LOG_ERR("Advertising failed to start (err %d)", err);
     return err;
@@ -409,12 +515,17 @@ int main(void) {
                 K_USEC(SAMPLE_PERIOD_US));
   LOG_INF("Sampling started at %u Hz", SAMPLE_FREQ_HZ);
 
-  /* Main loop - just blink LED */
+  /* Main loop - LED heartbeat only in lab mode */
   while (1) {
-    dk_set_led(DK_LED2, 1);
-    k_sleep(K_MSEC(500));
-    dk_set_led(DK_LED2, 0);
-    k_sleep(K_MSEC(500));
+    if (accel_service_get_mode() == MODE_CONTINUOUS_LAB) {
+      dk_set_led(DK_LED2, 1);
+      k_sleep(K_MSEC(500));
+      dk_set_led(DK_LED2, 0);
+      k_sleep(K_MSEC(500));
+    } else {
+      /* Coin-cell mode: sleep longer, no LED blink */
+      k_sleep(K_MSEC(1000));
+    }
   }
 
   return 0;

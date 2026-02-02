@@ -19,6 +19,7 @@ Zephyr_DIR:PATH=/home/smalab/ncs/v3.2.1/zephyr/share/zephyr-package/cmake
 _Python3_EXECUTABLE:INTERNAL=/home/smalab/ncs/toolchains/43683a87ea/usr/local/bin/python3.12
 _Python3_INTERPRETER_PROPERTIES:INTERNAL=Python;3;12;4;64;;cpython-312-x86_64-linux-gnu;/home/smalab/ncs/toolchains/43683a87ea/usr/local/lib/python3.12;/home/smalab/ncs/toolchains/43683a87ea/usr/local/lib/python3.12;/home/smalab/ncs/toolchains/43683a87ea/usr/local/lib/python3.12/site-packages;/home/smalab/ncs/toolchains/43683a87ea/usr/local/lib/python3.12/site-packages
 _Python3_INTERPRETER_SIGNATURE:INTERNAL=085b769039d472d91f52956e27b1cf53
+phase2-firmware_NCS_RUNNER_HEX:INTERNAL=/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/merged.hex
 sysbuild_toplevel_BINARY_DIR:STATIC=/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build
 sysbuild_toplevel_IS_TOP_LEVEL:STATIC=ON
 sysbuild_toplevel_SOURCE_DIR:STATIC=/home/smalab/ncs/v3.2.1/zephyr/share/sysbuild
