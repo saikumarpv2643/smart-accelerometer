@@ -19,6 +19,11 @@ let latencyHistory = [];
 const LATENCY_WINDOW = 100;
 let latencyMax = 0;
 let startTime = 0;
+let lastBurstId = -1;
+
+// Timestamp Unwrapping
+let lastFwTs = 0;
+let fwTsWrapOffset = 0;
 
 // ===== Zoom / Window Parameters =====
 const WINDOW_MIN = 0.1;
@@ -125,6 +130,10 @@ async function sendStart() {
     window.deviceTimeOffset = undefined;  // Reset clock sync
     window.firstDeviceTs = undefined;     // For relative latency
 
+    // Reset timestamp unwrapping
+    lastFwTs = 0;
+    fwTsWrapOffset = 0;
+
     // Clear charts
     timeChart.data.datasets.forEach(ds => ds.data = []);
     fftChart.data.datasets[0].data = [];
@@ -208,6 +217,16 @@ function onData(event) {
             rawZ = view.getInt16(offset + 12, true);
         }
 
+        // Unwrap 16-bit timestamp (Rev 3+ uses uint16 timestamps that wrap every ~65s)
+        if (hasNewFormat) {
+            // If timestamp jumped backwards significantly, it wrapped
+            if (timestampMs < lastFwTs - 30000) {
+                fwTsWrapOffset += 65536;
+            }
+            lastFwTs = timestampMs;
+            timestampMs += fwTsWrapOffset;
+        }
+
         // Check for dropped samples (handle 16-bit wrap for Rev 3)
         if (lastSampleCounter > 0) {
             let expected = (lastSampleCounter + 1) & (hasNewFormat ? 0xFFFF : 0xFFFFFFFF);
@@ -236,9 +255,12 @@ function onData(event) {
         timeChart.data.datasets[2].data.push({ x: t, y: az_g });
 
         // Calculate E2E latency (for burst mode, this includes buffering time)
-        if (sampleCount === 1) {
+        // Reset anchor on new burst (detected by ID change)
+        let currentBurstId = hasNewFormat ? view.getUint8(0) : -1;
+        if (sampleCount === 1 || (hasNewFormat && currentBurstId !== lastBurstId)) {
             window.firstDeviceTs = timestampMs;
             window.firstBrowserTs = receiveTime;
+            lastBurstId = currentBurstId;
         }
 
         // Calculate latency on last sample of packet
@@ -267,11 +289,18 @@ function onData(event) {
     if (latencyHistory.length > 0) {
         const currentLatency = latencyHistory[latencyHistory.length - 1];
         const avgLatency = latencyHistory.reduce((a, b) => a + b, 0) / latencyHistory.length;
-        latencyCurrent.textContent = currentLatency.toFixed(0) + " ms";
-        latencyAvg.textContent = avgLatency.toFixed(0) + " ms";
-        latencyMaxEl.textContent = latencyMax.toFixed(0) + " ms";
+
+        const formatLatency = (ms) => {
+            if (ms >= 1000) return (ms / 1000).toFixed(2) + " s";
+            return ms.toFixed(0) + " ms";
+        };
+
+        latencyCurrent.textContent = formatLatency(currentLatency);
+        latencyAvg.textContent = formatLatency(avgLatency);
+        latencyMaxEl.textContent = formatLatency(latencyMax);
     }
 
+    // Update statistics
     // Update statistics
     sampleCountEl.textContent = sampleCount.toLocaleString();
     const elapsedSec = (Date.now() - startTime) / 1000;
@@ -279,6 +308,14 @@ function onData(event) {
         sampleRateEl.textContent = (sampleCount / elapsedSec).toFixed(1) + " Hz";
     }
     droppedCountEl.textContent = droppedSamples.toString();
+}
+
+// Render Loop (Decoupled from Data Rate)
+function renderLoop() {
+    if (!lastSampleCounter) { // Check if we have data
+        requestAnimationFrame(renderLoop);
+        return;
+    }
 
     // Trim time-domain chart
     const maxPoints = Math.ceil(windowSeconds * SAMPLE_RATE) + 20;
@@ -287,15 +324,20 @@ function onData(event) {
     });
 
     // Update X-axis rolling window
+    const lastT = receivedData.length > 0 ? receivedData[receivedData.length - 1].t : 0;
     timeChart.options.scales.x.min = Math.max(0, lastT - windowSeconds);
     timeChart.options.scales.x.max = lastT;
+
     timeChart.update('none');
 
-    // Update FFT periodically (every 50 samples)
+    // Check FFT update
     if (sampleCount % 50 === 0 && receivedData.length >= fftSize) {
         computeAndDisplayFFT();
     }
+
+    requestAnimationFrame(renderLoop);
 }
+requestAnimationFrame(renderLoop);
 
 // ================= FFT =================
 function computeAndDisplayFFT() {

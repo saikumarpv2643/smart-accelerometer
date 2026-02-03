@@ -46,7 +46,8 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #define MPU6050_ACCEL_CONFIG 0x1C
 
 /* Burst mode timing */
-#define SAMPLES_BEFORE_BURST RING_BUFFER_SAMPLES /* 1024 */
+#define SAMPLES_BEFORE_BURST                                                   \
+  250 /* 250 samples = ~0.25s latency (Compromise: Safe & Fast) */
 #define INTER_PACKET_DELAY_MS 2 /* Prevent coin-cell brownout */
 
 /*============================================================================
@@ -338,8 +339,6 @@ static int mpu6050_init(void) {
     return ret;
   }
 
-  k_sleep(K_MSEC(100)); /* Wait for wake */
-
   /* Set sample rate divider
    * DLPF enabled (CFG=3) -> Gyro Rate = 1kHz.
    * Sample Rate = 1kHz / (1 + SMPLRT_DIV).
@@ -398,6 +397,14 @@ static void connected(struct bt_conn *conn, uint8_t err) {
   /* LED only in lab mode to save coin-cell power */
   if (accel_service_get_mode() == MODE_CONTINUOUS_LAB) {
     dk_set_led_on(DK_LED1);
+  }
+
+  /* Request fast connection interval for high throughput */
+  struct bt_le_conn_param *param =
+      BT_LE_CONN_PARAM(6, 12, 0, 400); // 7.5ms - 15ms
+  int err_param = bt_conn_le_param_update(conn, param);
+  if (err_param) {
+    LOG_WRN("Conn param update failed: %d", err_param);
   }
 
   accel_service_set_conn(conn);
@@ -487,13 +494,24 @@ static struct bt_le_adv_param adv_param = BT_LE_ADV_PARAM_INIT(
 int main(void) {
   int err;
 
+  /* Soft Start: Wait for coin cell voltage to stabilize after insertions */
+  k_sleep(K_MSEC(2000)); /* Give battery 2s (Rev 5.2) to recover voltage */
+
+  /* Initialize LEDs first to indicate alive status */
+  err = dk_leds_init();
+  if (err) {
+    LOG_ERR("LED init failed (err %d)", err);
+  }
+  /* Boot LED: OFF (Max Power Saving) */
+  dk_set_led_off(DK_LED1);
+
   /* Power-safe enforcement: Ensure structures match BLE packet requirements */
   BUILD_ASSERT(sizeof(accel_sample_t) == 10, "Sample must be 10 bytes");
   BUILD_ASSERT(sizeof(accel_packet_t) == 243, "Packet must be 243 bytes");
   BUILD_ASSERT(RING_BUFFER_SAMPLES == 1024, "Buffer must remain 1024 for FFT");
 
   LOG_INF("=========================================");
-  LOG_INF("ISRO Coin-Cell Accelerometer Rev 4");
+  LOG_INF("ISRO Coin-Cell Accelerometer Rev 5.2");
   LOG_INF("=========================================");
   LOG_INF("Sample format: %u bytes", ACCEL_SAMPLE_SIZE);
   LOG_INF("Packet format: %u bytes (%u samples)", ACCEL_PACKET_SIZE,
@@ -505,48 +523,32 @@ int main(void) {
   i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c1)); /* Check I2C */
   if (!device_is_ready(i2c_dev)) {
     LOG_ERR("I2C device not ready");
-    /* Error: Blink LED1 fast (I2C Failure) */
-    while (1) {
+    while (1) { /* Error Loop */
       dk_set_led_on(DK_LED1);
-      k_sleep(K_MSEC(100));
+      k_sleep(K_MSEC(50));
       dk_set_led_off(DK_LED1);
-      k_sleep(K_MSEC(100));
+      k_sleep(K_MSEC(50));
     }
-    return;
   }
   LOG_INF("I2C device ready");
 
   /* Init MPU6050 */
   if (mpu6050_init() < 0) {
-    LOG_ERR("MPU6050 init failed");
-    /* Error: Blink LED2 fast (Sensor Init Failure) */
-    while (1) {
-      dk_set_led_on(DK_LED2);
-      k_sleep(K_MSEC(200));
-      dk_set_led_off(DK_LED2);
-      k_sleep(K_MSEC(200));
-    }
-    return;
+    LOG_ERR("MPU6050 init failed - Continuing in Safe Mode");
+    /* Do NOT return. Allow BLE to start so we can see the error remotely */
   }
 
-  /* Initialize LEDs */
-  err = dk_leds_init();
-  if (err) {
-    LOG_ERR("LED init failed (err %d)", err);
-  }
+  /* CRITICAL BATTERY RECOVERY PAUSE */
+  /* The MPU6050 init pulled a large current spike.
+   * Sleep for 2 seconds to let the coin cell voltage bounce back
+   * BEFORE we enable the Radio. */
+  k_sleep(K_MSEC(2000));
 
   /* Init Bluetooth */
   err = bt_enable(NULL);
   if (err) {
     LOG_ERR("Bluetooth init failed (err %d)", err);
-    /* Error: Blink LED3 fast (BLE Failure) */
-    while (1) {
-      dk_set_led_on(DK_LED3);
-      k_sleep(K_MSEC(500));
-      dk_set_led_off(DK_LED3);
-      k_sleep(K_MSEC(500));
-    }
-    return;
+    return 0; /* Changed from void return */
   }
   LOG_INF("Bluetooth initialized");
 
@@ -559,7 +561,7 @@ int main(void) {
   err = accel_service_init();
   if (err) {
     LOG_ERR("Accel service init failed (err %d)", err);
-    return err;
+    return 0; /* Changed from void return */
   }
 
   /* Start advertising */
