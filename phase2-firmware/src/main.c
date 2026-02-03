@@ -502,18 +502,31 @@ int main(void) {
   LOG_INF("Packets per burst: %u", PACKETS_PER_BURST);
 
   /* Get I2C device */
-  i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c1));
+  i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c1)); /* Check I2C */
   if (!device_is_ready(i2c_dev)) {
-    LOG_ERR("I2C device not ready!");
-    return -ENODEV;
+    LOG_ERR("I2C device not ready");
+    /* Error: Blink LED1 fast (I2C Failure) */
+    while (1) {
+      dk_set_led_on(DK_LED1);
+      k_sleep(K_MSEC(100));
+      dk_set_led_off(DK_LED1);
+      k_sleep(K_MSEC(100));
+    }
+    return;
   }
   LOG_INF("I2C device ready");
 
-  /* Initialize MPU6050 */
-  err = mpu6050_init();
-  if (err) {
-    LOG_ERR("MPU6050 init failed: %d", err);
-    return err;
+  /* Init MPU6050 */
+  if (mpu6050_init() < 0) {
+    LOG_ERR("MPU6050 init failed");
+    /* Error: Blink LED2 fast (Sensor Init Failure) */
+    while (1) {
+      dk_set_led_on(DK_LED2);
+      k_sleep(K_MSEC(200));
+      dk_set_led_off(DK_LED2);
+      k_sleep(K_MSEC(200));
+    }
+    return;
   }
 
   /* Initialize LEDs */
@@ -522,11 +535,18 @@ int main(void) {
     LOG_ERR("LED init failed (err %d)", err);
   }
 
-  /* Initialize Bluetooth */
+  /* Init Bluetooth */
   err = bt_enable(NULL);
   if (err) {
     LOG_ERR("Bluetooth init failed (err %d)", err);
-    return err;
+    /* Error: Blink LED3 fast (BLE Failure) */
+    while (1) {
+      dk_set_led_on(DK_LED3);
+      k_sleep(K_MSEC(500));
+      dk_set_led_off(DK_LED3);
+      k_sleep(K_MSEC(500));
+    }
+    return;
   }
   LOG_INF("Bluetooth initialized");
 

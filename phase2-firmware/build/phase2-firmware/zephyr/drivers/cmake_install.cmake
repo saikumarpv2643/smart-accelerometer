@@ -84,11 +84,6 @@ endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/console/cmake_install.cmake")
-endif()
-
-if(NOT CMAKE_INSTALL_LOCAL_ONLY)
-  # Include the install script for the subdirectory.
   include("/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/entropy/cmake_install.cmake")
 endif()
 
@@ -115,11 +110,6 @@ endif()
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
   include("/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/pinctrl/cmake_install.cmake")
-endif()
-
-if(NOT CMAKE_INSTALL_LOCAL_ONLY)
-  # Include the install script for the subdirectory.
-  include("/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/serial/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)

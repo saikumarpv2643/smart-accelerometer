@@ -554,13 +554,6 @@
 /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/clock_control/CMakeFiles/list_install_components.dir
 /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/clock_control/CMakeFiles/edit_cache.dir
 /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/clock_control/CMakeFiles/rebuild_cache.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/console/CMakeFiles/install/strip.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/console/CMakeFiles/install/local.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/console/CMakeFiles/edit_cache.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/console/CMakeFiles/drivers__console.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/console/CMakeFiles/rebuild_cache.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/console/CMakeFiles/install.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/console/CMakeFiles/list_install_components.dir
 /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/entropy/CMakeFiles/install/strip.dir
 /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/entropy/CMakeFiles/install/local.dir
 /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/entropy/CMakeFiles/drivers__entropy.dir
@@ -609,13 +602,6 @@
 /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/pinctrl/renesas/CMakeFiles/rebuild_cache.dir
 /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/pinctrl/renesas/CMakeFiles/list_install_components.dir
 /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/pinctrl/renesas/CMakeFiles/install.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/serial/CMakeFiles/install/strip.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/serial/CMakeFiles/install/local.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/serial/CMakeFiles/edit_cache.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/serial/CMakeFiles/drivers__serial.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/serial/CMakeFiles/rebuild_cache.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/serial/CMakeFiles/install.dir
-/home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/serial/CMakeFiles/list_install_components.dir
 /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/timer/CMakeFiles/install/strip.dir
 /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/timer/CMakeFiles/install/local.dir
 /home/smalab/ISRO-Project/New_project-demo/phase2-firmware/build/phase2-firmware/zephyr/drivers/timer/CMakeFiles/drivers__timer.dir
