@@ -1,0 +1,13 @@
+# Target labels
+ phase2-firmware
+# Source files and their labels
+/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/CMakeFiles/phase2-firmware
+/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/CMakeFiles/phase2-firmware.rule
+/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/CMakeFiles/phase2-firmware-complete.rule
+/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-build.rule
+/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-configure.rule
+/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-download.rule
+/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-install.rule
+/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-mkdir.rule
+/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-patch.rule
+/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-update.rule

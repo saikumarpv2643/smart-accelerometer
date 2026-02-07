@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wireless Data Acquisition System</title>
+
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Main JS -->
+    <script defer src="javascript.js"></script>
+</head>
+
+<body>
+    <!-- ===== TOP BAR ===== -->
+    <div class="top-bar">
+        <img src="sirlogo.png" alt="Logo" class="logo-image">
+        <div class="department-info">
+            <h1>Wireless Data Acquisition System</h1>
+            <span class="subtitle">ISRO Smart Accelerometer | Phase 2</span>
+        </div>
+        <a href="https://www.iittp.ac.in/">
+            <img src="tirupatilogo.png" alt="Logo" class="logo-image1">
+        </a>
+    </div>
+
+    <!-- ===== MAIN ===== -->
+    <div class="main">
+        <!-- ===== CONTROLS CARD ===== -->
+        <div class="card controls-card">
+            <div class="button-container">
+                <button id="connectButton" class="btn-primary">
+                    <span class="btn-icon">⚡</span> Connect
+                </button>
+                <button id="startButton" class="btn-success" disabled>
+                    <span class="btn-icon">▶</span> Start Reading
+                </button>
+                <button id="stopButton" class="btn-danger" disabled>
+                    <span class="btn-icon">⏹</span> Stop Reading
+                </button>
+                <div class="file-input-group">
+                    <input type="text" id="file-name" placeholder="File name">
+                    <button id="exportButton" class="btn-secondary" disabled>
+                        <span class="btn-icon">💾</span> Save CSV
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== METRICS PANEL ===== -->
+        <div class="metrics-panel">
+            <!-- Live Acceleration Values -->
+            <div class="metric-card accel-card">
+                <div class="metric-header">Acceleration (g)</div>
+                <div class="accel-values">
+                    <div class="accel-item x-axis">
+                        <span class="axis-label">X</span>
+                        <span id="xValue" class="axis-value">-</span>
+                    </div>
+                    <div class="accel-item y-axis">
+                        <span class="axis-label">Y</span>
+                        <span id="yValue" class="axis-value">-</span>
+                    </div>
+                    <div class="accel-item z-axis">
+                        <span class="axis-label">Z</span>
+                        <span id="zValue" class="axis-value">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Latency Metrics -->
+            <div class="metric-card latency-card">
+                <div class="metric-header">E2E Latency</div>
+                <div class="latency-values">
+                    <div class="latency-item">
+                        <span class="latency-label">Current</span>
+                        <span id="latencyCurrent" class="latency-value">- ms</span>
+                    </div>
+                    <div class="latency-item">
+                        <span class="latency-label">Avg</span>
+                        <span id="latencyAvg" class="latency-value">- ms</span>
+                    </div>
+                    <div class="latency-item">
+                        <span class="latency-label">Max</span>
+                        <span id="latencyMax" class="latency-value">- ms</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Statistics -->
+            <div class="metric-card stats-card">
+                <div class="metric-header">Statistics</div>
+                <div class="stats-values">
+                    <div class="stat-item">
+                        <span class="stat-label">Samples</span>
+                        <span id="sampleCount" class="stat-value">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Rate</span>
+                        <span id="sampleRate" class="stat-value">- Hz</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Dropped</span>
+                        <span id="droppedCount" class="stat-value">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== CHARTS SECTION ===== -->
+        <div class="charts-section">
+            <!-- Time Domain Chart -->
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3>Time Domain</h3>
+                    <div class="chart-controls">
+                        <button id="zoomInButton" class="btn-icon-only" title="Zoom In">−</button>
+                        <span id="windowDisplay" class="window-label">1.0 s</span>
+                        <button id="zoomOutButton" class="btn-icon-only" title="Zoom Out">+</button>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="timeChart"></canvas>
+                </div>
+                <div class="chart-footer">
+                    <div class="y-axis-controls">
+                        <input type="number" id="yAxisMin" placeholder="Y Min" step="0.5">
+                        <input type="number" id="yAxisMax" placeholder="Y Max" step="0.5">
+                        <button id="updateYAxisButton" class="btn-small">Apply</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- FFT Chart -->
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h3>Frequency Domain (FFT)</h3>
+                    <div class="chart-controls">
+                        <select id="fftAxisSelect" class="axis-select">
+                            <option value="x">X Axis</option>
+                            <option value="y">Y Axis</option>
+                            <option value="z">Z Axis</option>
+                        </select>
+                        <span id="peakFreq" class="peak-freq">Peak: - Hz</span>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="fftChart"></canvas>
+                </div>
+                <div class="chart-footer">
+                    <div class="fft-controls">
+                        <label>FFT Size:</label>
+                        <select id="fftSizeSelect">
+                            <option value="256">256</option>
+                            <option value="512" selected>512</option>
+                            <option value="1024">1024</option>
+                            <option value="2048">2048</option>
+                        </select>
+                        <span class="freq-resolution" id="freqResolution">Resolution: - Hz</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</body>
+
+</html>

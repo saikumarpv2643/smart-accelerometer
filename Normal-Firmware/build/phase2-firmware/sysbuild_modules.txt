@@ -1,0 +1,2 @@
+"nrf":"/home/smalab/ncs/v3.2.1/nrf":"/home/smalab/ncs/v3.2.1/nrf/sysbuild"
+"mcuboot":"/home/smalab/ncs/v3.2.1/bootloader/mcuboot":"/home/smalab/ncs/v3.2.1/bootloader/mcuboot/boot/zephyr/sysbuild"

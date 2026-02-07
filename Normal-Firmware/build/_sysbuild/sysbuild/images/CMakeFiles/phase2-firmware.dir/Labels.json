@@ -1,0 +1,43 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/CMakeFiles/phase2-firmware"
+		},
+		{
+			"file" : "/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/CMakeFiles/phase2-firmware.rule"
+		},
+		{
+			"file" : "/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/CMakeFiles/phase2-firmware-complete.rule"
+		},
+		{
+			"file" : "/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-build.rule"
+		},
+		{
+			"file" : "/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-configure.rule"
+		},
+		{
+			"file" : "/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-download.rule"
+		},
+		{
+			"file" : "/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-install.rule"
+		},
+		{
+			"file" : "/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-mkdir.rule"
+		},
+		{
+			"file" : "/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-patch.rule"
+		},
+		{
+			"file" : "/home/smalab/ISRO-Project/accelometer_latency/phase2-firmware/phase2-firmware/build/_sysbuild/sysbuild/images/phase2-firmware-prefix/src/phase2-firmware-stamp/phase2-firmware-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"phase2-firmware"
+		],
+		"name" : "phase2-firmware"
+	}
+}
